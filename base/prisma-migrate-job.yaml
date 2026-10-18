@@ -1,0 +1,97 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: prisma-migrate-deploy
+  labels:
+    app.kubernetes.io/name: prisma-migrate-deploy
+    app.kubernetes.io/component: database-migration
+    app.kubernetes.io/part-of: expense-tracker
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 180
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: prisma-migrate-deploy
+        app.kubernetes.io/component: database-migration
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: dockerhub-regcred
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: prisma-migrate
+          image: tuanstark/expense-tracker-function:sha-b283cac
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: expense-tracker-config
+            - secretRef:
+                name: expense-tracker-secrets
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              echo "[Prisma PreSync Hook] Verifying target environment guardrail..."
+              if [ "${APP_ENV:-}" != "staging" ]; then
+                echo "CRITICAL: APP_ENV must be 'staging' (got '${APP_ENV:-unset}'). Aborting migration!"
+                exit 1
+              fi
+
+              # Use DIRECT_DATABASE_URL (non-pooled port 5432) if provided, otherwise fallback to DATABASE_URL
+              if [ -n "${DIRECT_DATABASE_URL:-}" ]; then
+                export DATABASE_URL="${DIRECT_DATABASE_URL}"
+              fi
+
+              if [ -z "${DATABASE_URL:-}" ]; then
+                echo "CRITICAL: DATABASE_URL is not set. Aborting migration!"
+                exit 1
+              fi
+
+              # Extract only the database name without printing credentials
+              DB_NAME=$(node -e '
+                try {
+                  const u = new URL(process.env.DATABASE_URL);
+                  console.log(u.pathname.replace(/^\//, ""));
+                } catch {
+                  process.exit(1);
+                }
+              ')
+
+              case "$DB_NAME" in
+                *staging*)
+                  echo "[Prisma PreSync Hook] Confirmed target database matches staging pattern (${DB_NAME})."
+                  ;;
+                *)
+                  echo "CRITICAL SAFETY BLOCK: Database name '${DB_NAME}' does not contain 'staging'. Refusing to run migration!"
+                  exit 1
+                  ;;
+              esac
+
+              echo "[Prisma PreSync Hook] Running offline prisma migrate deploy..."
+              ./node_modules/.bin/prisma migrate deploy
+              echo "[Prisma PreSync Hook] Migration completed successfully!"
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "300m"
+              memory: "256Mi"

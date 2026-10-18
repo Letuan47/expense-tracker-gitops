@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: expense-tracker-web
+  labels:
+    app.kubernetes.io/name: expense-tracker-web
+    app.kubernetes.io/component: frontend
+    app.kubernetes.io/part-of: expense-tracker
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: expense-tracker-web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: expense-tracker-web
+        app.kubernetes.io/component: frontend
+        app.kubernetes.io/part-of: expense-tracker
+    spec:
+      terminationGracePeriodSeconds: 15
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: dockerhub-regcred
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: expense-tracker-web
+          image: tuanstark/expense-tracker-customer:sha-99af31c
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 15
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+          resources:
+            requests:
+              cpu: "20m"
+              memory: "32Mi"
+            limits:
+              cpu: "100m"
+              memory: "64Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: expense-tracker-web
+  labels:
+    app.kubernetes.io/name: expense-tracker-web
+    app.kubernetes.io/component: frontend
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: expense-tracker-web
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP

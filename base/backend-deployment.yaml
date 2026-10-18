@@ -1,0 +1,106 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: expense-tracker-api
+  labels:
+    app.kubernetes.io/name: expense-tracker-api
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: expense-tracker
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: expense-tracker-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: expense-tracker-api
+        app.kubernetes.io/component: backend
+        app.kubernetes.io/part-of: expense-tracker
+    spec:
+      terminationGracePeriodSeconds: 30
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: dockerhub-regcred
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: expense-tracker-api
+          image: tuanstark/expense-tracker-function:sha-b283cac
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: expense-tracker-config
+            - secretRef:
+                name: expense-tracker-secrets
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+          # 1. Startup Probe: Allows NestJS + Prisma Client to initialize
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 12
+          # 2. Liveness Probe: Checks Node.js event loop only (never queries DB)
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 2
+            failureThreshold: 3
+          # 3. Readiness Probe: Verifies non-draining state + PostgreSQL connectivity (< 2.5s)
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 2
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "192Mi"
+            limits:
+              cpu: "500m"
+              memory: "384Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: expense-tracker-api
+  labels:
+    app.kubernetes.io/name: expense-tracker-api
+    app.kubernetes.io/component: backend
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: expense-tracker-api
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+      protocol: TCP

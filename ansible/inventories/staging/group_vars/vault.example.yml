@@ -1,0 +1,13 @@
+---
+# ==============================================================================
+# ANSIBLE VAULT TEMPLATE — DO NOT COMMIT REAL KEYS IN PLAINTEXT
+# Usage:
+#   cp inventories/staging/group_vars/vault.example.yml inventories/staging/group_vars/vault.yml
+#   # Paste your age private key into vault.yml, then encrypt with Ansible Vault:
+#   ansible-vault encrypt inventories/staging/group_vars/vault.yml
+# ==============================================================================
+
+vault_sops_age_private_key: |
+  # created: 2026-10-18T00:00:00Z
+  # public key: age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p
+  AGE-SECRET-KEY-1CHANGE_ME_DO_NOT_COMMIT_PLAINTEXT_KEY

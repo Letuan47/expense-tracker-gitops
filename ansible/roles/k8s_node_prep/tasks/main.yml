@@ -1,0 +1,85 @@
+---
+- name: Load required Linux kernel modules for Kubernetes (overlay, br_netfilter)
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - overlay
+    - br_netfilter
+
+- name: Persist Kubernetes kernel modules across reboots
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/k3s.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      overlay
+      br_netfilter
+
+- name: Check if swapfile already exists at {{ swap_file_path }}
+  ansible.builtin.stat:
+    path: "{{ swap_file_path }}"
+  register: swap_file_stat
+  when: swap_enabled | bool
+
+- name: Allocate {{ swap_file_size_mb }}MB swapfile to prevent OOMKills on Single-Node VPS
+  ansible.builtin.command:
+    cmd: "dd if=/dev/zero of={{ swap_file_path }} bs=1M count={{ swap_file_size_mb }}"
+    creates: "{{ swap_file_path }}"
+  when:
+    - swap_enabled | bool
+    - not swap_file_stat.stat.exists
+
+- name: Set strict 0600 permissions on {{ swap_file_path }}
+  ansible.builtin.file:
+    path: "{{ swap_file_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when: swap_enabled | bool
+
+- name: Format {{ swap_file_path }} as swap space
+  ansible.builtin.command:
+    cmd: "mkswap {{ swap_file_path }}"
+  when:
+    - swap_enabled | bool
+    - not swap_file_stat.stat.exists
+
+- name: Enable {{ swap_file_path }} immediately
+  ansible.builtin.command:
+    cmd: "swapon {{ swap_file_path }}"
+  when:
+    - swap_enabled | bool
+    - ansible_swaptotal_mb < 512
+  changed_when: true
+
+- name: Persist swapfile in /etc/fstab
+  ansible.posix.mount:
+    name: none
+    src: "{{ swap_file_path }}"
+    fstype: swap
+    opts: sw
+    passno: 0
+    dump: 0
+    state: present
+  when: swap_enabled | bool
+
+- name: Apply SRE sysctl kernel tuning for K3s, Traefik, and ArgoCD (/etc/sysctl.d/99-k3s-sre.conf)
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/99-k3s-sre.conf
+    state: present
+    reload: true
+  loop:
+    - { name: "net.bridge.bridge-nf-call-iptables", value: "1" }
+    - { name: "net.bridge.bridge-nf-call-ip6tables", value: "1" }
+    - { name: "net.ipv4.ip_forward", value: "1" }
+    - { name: "net.ipv6.conf.all.forwarding", value: "1" }
+    - { name: "vm.swappiness", value: "{{ vm_swappiness | string }}" }
+    - { name: "vm.overcommit_memory", value: "1" }
+    - { name: "vm.panic_on_oom", value: "0" }
+    - { name: "fs.inotify.max_user_watches", value: "524288" }
+    - { name: "fs.inotify.max_user_instances", value: "512" }
+    - { name: "net.core.somaxconn", value: "32768" }

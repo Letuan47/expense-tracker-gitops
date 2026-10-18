@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: expense-tracker-staging
+
+resources:
+  - ../../base
+  - configmap.yaml
+
+# Uncomment `generators` once `secrets/expense-tracker-secrets.enc.yaml` is encrypted with SOPS + age:
+# generators:
+#   - secret-generator.yaml
+
+images:
+  - name: tuanstark/expense-tracker-function
+    newName: tuanstark/expense-tracker-function
+    newTag: "sha-b283cac" # backend-image-tag
+  - name: tuanstark/expense-tracker-customer
+    newName: tuanstark/expense-tracker-customer
+    newTag: "sha-99af31c" # frontend-image-tag

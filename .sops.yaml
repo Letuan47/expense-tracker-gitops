@@ -1,0 +1,6 @@
+# SOPS Configuration for Expense Tracker GitOps
+# Replace the age recipient below with your actual age public key generated via: age-keygen -o staging-age.key
+creation_rules:
+  - path_regex: overlays/staging/secrets/.*\.enc\.yaml$
+    encrypted_regex: "^(data|stringData)$"
+    age: "age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p"

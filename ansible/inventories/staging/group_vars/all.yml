@@ -1,0 +1,47 @@
+---
+# ==============================================================================
+# Global Configuration Variables — Staging Environment (K3s Single-Node)
+# ==============================================================================
+
+environment_name: "staging"
+staging_domain: "staging.quanlichitieu.tuanstark.id.vn"
+acme_email: "admin@tuanstark.id.vn"
+
+# --- 1. OS Hardening & Firewall (UFW) ---
+ssh_port: 22
+ssh_disable_password_auth: true
+ssh_permit_root_login: "prohibit-password"
+
+# Restrict external access to K3s API port 6443 (empty = blocked from public internet;
+# use SSH tunnel `ssh -L 6443:127.0.0.1:6443` or add your static office/home IP CIDR e.g. ["1.2.3.4/32"])
+k3s_api_allowed_cidrs: []
+
+# K3s internal Pod & Service CIDRs (must be allowed on CNI interfaces in UFW)
+k3s_cluster_cidr: "10.42.0.0/16"
+k3s_service_cidr: "10.43.0.0/16"
+
+# --- 2. Node Memory, Swap & Kernel Tuning ---
+swap_enabled: true
+swap_file_path: "/swapfile"
+swap_file_size_mb: 2048
+vm_swappiness: 10
+
+# --- 3. K3s Server Configuration (Pinned Version) ---
+k3s_version: "v1.31.4+k3s1"
+k3s_config_file: "/etc/rancher/k3s/config.yaml"
+k3s_kubeconfig_mode: "0600"
+k3s_container_log_max_size: "10Mi"
+k3s_container_log_max_files: 3
+k3s_image_gc_high_threshold: 80
+k3s_image_gc_low_threshold: 70
+k3s_eviction_hard: "memory.available<150Mi,nodefs.available<10%"
+k3s_disable_components: []
+
+# --- 4. Cert-Manager, ArgoCD & GitOps Hand-off ---
+cert_manager_version: "v1.16.2"
+argocd_version: "v2.13.2"
+argocd_namespace: "argocd"
+# Disable SSO Dex & Notifications on Staging single-node VPS to save ~250MB RAM
+argocd_lean_profile: true
+# Automatically apply ArgoCD AppProject & Application to start GitOps sync
+argocd_enable_gitops_handoff: true

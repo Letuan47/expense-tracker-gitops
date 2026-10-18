@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: expense-tracker-config
+data:
+  NODE_ENV: "production"
+  APP_ENV: "staging"
+  PORT: "3000"
+  CORS_ORIGIN: "https://staging.quanlichitieu.tuanstark.id.vn"
+  DOMAIN: "https://staging.quanlichitieu.tuanstark.id.vn"
+  K8S_SHUTDOWN_DRAIN_MS: "3000"
+  ENABLE_SWAGGER: "true"
+  POSTGRES_LOGGING: "false"
+  JWT_EXPIRE_IN: "3600"

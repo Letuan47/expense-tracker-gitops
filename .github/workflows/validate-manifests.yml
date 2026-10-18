@@ -1,0 +1,60 @@
+name: Validate GitOps Kustomize, Ansible Syntax & Secret Safety
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate-gitops-and-ansible:
+    name: 🛡️ Validate Kustomize, Ansible Playbooks & Secret Encryption
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+
+    steps:
+      - name: 📥 Checkout GitOps Repository
+        uses: actions/checkout@v4
+
+      - name: 🔒 Block Unencrypted Kubernetes Secrets & Ansible Vault Files
+        run: |
+          echo "Checking for accidental plaintext Kubernetes Secret manifests..."
+          for f in $(find base overlays -name "*.yaml" -not -name "*.example.yaml"); do
+            if grep -q "^kind:[[:space:]]*Secret" "$f"; then
+              if ! grep -q "^sops:" "$f"; then
+                echo "❌ CRITICAL SECURITY VIOLATION: File '$f' contains kind: Secret without SOPS encryption metadata!"
+                exit 1
+              fi
+            fi
+          done
+
+          echo "Checking for accidental plaintext Ansible Vault files..."
+          for vf in $(find ansible -name "vault.yml"); do
+            if ! head -n 1 "$vf" | grep -q '^\$ANSIBLE_VAULT;'; then
+              echo "❌ CRITICAL SECURITY VIOLATION: '$vf' is not encrypted with ansible-vault!"
+              exit 1
+            fi
+          done
+          echo "✅ All Kubernetes Secrets and Ansible Vault files verified safe."
+
+      - name: ☸️ Render & Validate Staging Kustomize Overlay
+        run: |
+          kubectl kustomize overlays/staging > /tmp/staging-rendered.yaml
+          grep -q "kind: Namespace" /tmp/staging-rendered.yaml
+          grep -q "name: prisma-migrate-deploy" /tmp/staging-rendered.yaml
+          grep -q "name: expense-tracker-api" /tmp/staging-rendered.yaml
+          grep -q "name: expense-tracker-web" /tmp/staging-rendered.yaml
+          grep -q "name: expense-tracker-ingress" /tmp/staging-rendered.yaml
+          echo "✅ Kustomize staging overlay rendered cleanly ($(wc -l < /tmp/staging-rendered.yaml) lines)."
+
+      - name: 🤖 Validate Ansible Playbooks Syntax
+        working-directory: ansible
+        run: |
+          ansible-galaxy collection install -r requirements.yml
+          ansible-playbook -i inventories/staging/hosts.ini playbooks/site.yml --syntax-check
+          ansible-playbook -i inventories/staging/hosts.ini playbooks/harden-os.yml --syntax-check
+          ansible-playbook -i inventories/staging/hosts.ini playbooks/fetch-kubeconfig.yml --syntax-check
+          echo "✅ All Ansible playbooks passed syntax validation."

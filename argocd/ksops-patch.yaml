@@ -1,0 +1,62 @@
+# 1. Patch argocd-cm to enable Kustomize alpha plugins (required by KSOPS)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+data:
+  kustomize.buildOptions: "--enable-alpha-plugins --enable-exec"
+---
+# 2. Strategic Merge Patch for argocd-repo-server to install KSOPS + SOPS and mount age private key
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-repo-server
+  namespace: argocd
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: install-ksops
+          image: viaductoss/ksops:v4.3.2
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "Installing KSOPS and SOPS binaries into /custom-tools..."
+              cp /usr/local/bin/ksops /custom-tools/ksops
+              cp /usr/local/bin/sops /custom-tools/sops
+              chmod +x /custom-tools/ksops /custom-tools/sops
+          volumeMounts:
+            - mountPath: /custom-tools
+              name: custom-tools
+          resources:
+            requests:
+              cpu: "20m"
+              memory: "32Mi"
+            limits:
+              cpu: "100m"
+              memory: "64Mi"
+      containers:
+        - name: argocd-repo-server
+          env:
+            - name: XDG_CONFIG_HOME
+              value: /.config
+            - name: SOPS_AGE_KEY_FILE
+              value: /.config/sops/age/keys.txt
+          volumeMounts:
+            - mountPath: /usr/local/bin/ksops
+              name: custom-tools
+              subPath: ksops
+            - mountPath: /usr/local/bin/sops
+              name: custom-tools
+              subPath: sops
+            - mountPath: /.config/sops/age/keys.txt
+              name: sops-age-key
+              subPath: keys.txt
+              readOnly: true
+      volumes:
+        - name: custom-tools
+          emptyDir: {}
+        - name: sops-age-key
+          secret:
+            secretName: sops-age-key

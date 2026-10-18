@@ -1,0 +1,13 @@
+# Never commit age private keys, kubeconfigs, or unencrypted secret/vault files
+*.key
+*.pem
+*kubeconfig*
+k3s-staging.yaml
+*secret*.yaml
+!*secret*.enc.yaml
+!*secret*.example.yaml
+!secret-generator.yaml
+ansible/inventories/**/group_vars/vault.yml
+!ansible/inventories/**/group_vars/vault.example.yml
+*.retry
+.DS_Store

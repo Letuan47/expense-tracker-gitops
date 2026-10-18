@@ -1,0 +1,105 @@
+---
+- name: Ensure /etc/rancher/k3s/manifests-staging directory exists on remote host
+  ansible.builtin.file:
+    path: /etc/rancher/k3s/manifests-staging
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Copy ArgoCD & Cert-Manager bootstrap manifests to remote host
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../argocd/{{ item }}"
+    dest: "/etc/rancher/k3s/manifests-staging/{{ item }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop:
+    - cluster-issuer.yaml
+    - ksops-patch.yaml
+    - project-staging.yaml
+    - application-staging.yaml
+
+- name: Install Cert-Manager ({{ cert_manager_version }}) for Let's Encrypt TLS
+  ansible.builtin.command:
+    cmd: "k3s kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/{{ cert_manager_version }}/cert-manager.yaml"
+  register: cert_manager_apply
+  changed_when: "'configured' in cert_manager_apply.stdout or 'created' in cert_manager_apply.stdout"
+
+- name: Wait for Cert-Manager webhook and controllers to become Available
+  ansible.builtin.command:
+    cmd: "k3s kubectl -n cert-manager wait --for=condition=Available deployment --all --timeout=180s"
+  changed_when: false
+
+- name: Apply Let's Encrypt Staging & Production ClusterIssuers
+  ansible.builtin.command:
+    cmd: "k3s kubectl apply -f /etc/rancher/k3s/manifests-staging/cluster-issuer.yaml"
+  register: issuer_apply
+  changed_when: "'configured' in issuer_apply.stdout or 'created' in issuer_apply.stdout"
+
+- name: Create ArgoCD namespace ({{ argocd_namespace }})
+  ansible.builtin.shell:
+    cmd: "k3s kubectl create namespace {{ argocd_namespace }} --dry-run=client -o yaml | k3s kubectl apply -f -"
+  register: argocd_ns
+  changed_when: "'created' in argocd_ns.stdout"
+
+- name: Install ArgoCD ({{ argocd_version }})
+  ansible.builtin.command:
+    cmd: "k3s kubectl apply -n {{ argocd_namespace }} -f https://raw.githubusercontent.com/argoproj/argo-cd/{{ argocd_version }}/manifests/install.yaml"
+  register: argocd_install
+  changed_when: "'configured' in argocd_install.stdout or 'created' in argocd_install.stdout"
+
+- name: Optimize ArgoCD RAM usage on Single-Node VPS (Scale down dex-server & notifications-controller)
+  ansible.builtin.command:
+    cmd: "k3s kubectl -n {{ argocd_namespace }} scale deployment {{ item }} --replicas=0"
+  loop:
+    - argocd-dex-server
+    - argocd-notifications-controller
+  when: argocd_lean_profile | bool
+  changed_when: false
+
+- name: Provision SOPS age private key into argocd/sops-age-key Secret (no_log enforced)
+  ansible.builtin.shell:
+    cmd: |
+      k3s kubectl -n {{ argocd_namespace }} create secret generic sops-age-key \
+        --from-literal=keys.txt="$AGE_KEY_CONTENT" \
+        --dry-run=client -o yaml | k3s kubectl apply -f -
+  environment:
+    AGE_KEY_CONTENT: "{{ vault_sops_age_private_key | default('# placeholder age key - configure via ansible-vault') }}"
+  no_log: true
+  changed_when: true
+
+- name: Enable Kustomize alpha plugins (--enable-alpha-plugins --enable-exec) in argocd-cm
+  ansible.builtin.command:
+    cmd: >
+      k3s kubectl -n {{ argocd_namespace }} patch configmap argocd-cm
+      --type merge
+      -p '{"data":{"kustomize.buildOptions":"--enable-alpha-plugins --enable-exec"}}'
+  changed_when: true
+
+- name: Patch argocd-repo-server Deployment with KSOPS initContainer and sops-age-key mount
+  ansible.builtin.shell:
+    cmd: |
+      PATCH_CONTENT=$(awk '/^apiVersion: apps\/v1/,0' /etc/rancher/k3s/manifests-staging/ksops-patch.yaml)
+      k3s kubectl -n {{ argocd_namespace }} patch deployment argocd-repo-server --patch "$PATCH_CONTENT"
+  changed_when: true
+
+- name: Wait for argocd-repo-server and argocd-server rollout to complete
+  ansible.builtin.command:
+    cmd: "k3s kubectl -n {{ argocd_namespace }} rollout status deployment/{{ item }} --timeout=180s"
+  loop:
+    - argocd-repo-server
+    - argocd-server
+  changed_when: false
+
+- name: Apply Least-Privilege ArgoCD AppProject (project-staging.yaml)
+  ansible.builtin.command:
+    cmd: "k3s kubectl apply -f /etc/rancher/k3s/manifests-staging/project-staging.yaml"
+  when: argocd_enable_gitops_handoff | bool
+  changed_when: true
+
+- name: Hand-off to ArgoCD GitOps — Apply Application (application-staging.yaml)
+  ansible.builtin.command:
+    cmd: "k3s kubectl apply -f /etc/rancher/k3s/manifests-staging/application-staging.yaml"
+  when: argocd_enable_gitops_handoff | bool
+  changed_when: true

@@ -1,0 +1,136 @@
+---
+- name: Update APT package cache and install base security & diagnostic packages
+  ansible.builtin.apt:
+    name:
+      - ufw
+      - fail2ban
+      - unattended-upgrades
+      - apt-listchanges
+      - curl
+      - jq
+      - ca-certificates
+      - gnupg
+      - apt-transport-https
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Harden SSH daemon — Disable password authentication
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?PasswordAuthentication"
+    line: "PasswordAuthentication no"
+    validate: "/usr/sbin/sshd -t -f %s"
+  when: ssh_disable_password_auth | bool
+  notify: Restart sshd
+
+- name: Harden SSH daemon — Restrict root login to SSH keys only (or disabled)
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?PermitRootLogin"
+    line: "PermitRootLogin {{ ssh_permit_root_login }}"
+    validate: "/usr/sbin/sshd -t -f %s"
+  notify: Restart sshd
+
+- name: Harden SSH daemon — Limit MaxAuthTries and idle session timeout
+  ansible.builtin.blockinfile:
+    path: /etc/ssh/sshd_config
+    marker: "# {mark} ANSIBLE MANAGED SSH HARDENING"
+    block: |
+      MaxAuthTries 3
+      ClientAliveInterval 300
+      ClientAliveCountMax 2
+      X11Forwarding no
+    validate: "/usr/sbin/sshd -t -f %s"
+  notify: Restart sshd
+
+- name: Configure Fail2ban local jail for SSH brute-force protection
+  ansible.builtin.copy:
+    dest: /etc/fail2ban/jail.d/sshd.local
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [sshd]
+      enabled = true
+      port = {{ ssh_port }}
+      maxretry = 5
+      findtime = 10m
+      bantime = 1h
+  notify: Restart fail2ban
+
+- name: Ensure Fail2ban service is enabled and running
+  ansible.builtin.systemd:
+    name: fail2ban
+    enabled: true
+    state: started
+
+- name: UFW — Allow loopback traffic
+  community.general.ufw:
+    rule: allow
+    interface: lo
+    direction: in
+
+- name: UFW — Rate-limit SSH port ({{ ssh_port }}/tcp)
+  community.general.ufw:
+    rule: limit
+    port: "{{ ssh_port | string }}"
+    proto: tcp
+    comment: "Rate-limited SSH access"
+
+- name: UFW — Allow HTTP (80/tcp) and HTTPS (443/tcp) for Traefik Ingress
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port }}"
+    proto: tcp
+    comment: "{{ item.comment }}"
+  loop:
+    - { port: "80", comment: "Traefik HTTP & ACME HTTP-01" }
+    - { port: "443", comment: "Traefik HTTPS Ingress" }
+
+- name: UFW — Allow K3s CNI interfaces (cni0 & flannel.1) so Pod-to-Pod & CoreDNS work
+  community.general.ufw:
+    rule: allow
+    interface: "{{ item }}"
+    direction: in
+    comment: "K3s CNI internal networking"
+  loop:
+    - cni0
+    - flannel.1
+
+- name: UFW — Allow K3s Pod CIDR ({{ k3s_cluster_cidr }}) and Service CIDR ({{ k3s_service_cidr }})
+  community.general.ufw:
+    rule: allow
+    from_ip: "{{ item }}"
+    comment: "K3s internal Pod/Service CIDR"
+  loop:
+    - "{{ k3s_cluster_cidr }}"
+    - "{{ k3s_service_cidr }}"
+
+- name: UFW — Allow K3s API (6443/tcp) ONLY from whitelisted admin CIDRs
+  community.general.ufw:
+    rule: allow
+    port: "6443"
+    proto: tcp
+    from_ip: "{{ item }}"
+    comment: "Restricted K3s API access"
+  loop: "{{ k3s_api_allowed_cidrs }}"
+  when: k3s_api_allowed_cidrs | length > 0
+
+- name: UFW — Set default policies (deny incoming, allow outgoing, allow routed for K8s CNI)
+  community.general.ufw:
+    state: enabled
+    default: deny
+    direction: incoming
+
+- name: UFW — Allow outgoing traffic
+  community.general.ufw:
+    state: enabled
+    default: allow
+    direction: outgoing
+
+- name: UFW — Allow routed traffic for Kubernetes CNI forwarding
+  community.general.ufw:
+    state: enabled
+    default: allow
+    direction: routed
