@@ -17,4 +17,4 @@ images:
     newTag: "sha-b283cac" # backend-image-tag
   - name: tuanstark/expense-tracker-customer
     newName: tuanstark/expense-tracker-customer
-    newTag: "sha-99af31c" # frontend-image-tag
+    newTag: "sha-560d8b1"
