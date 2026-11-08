@@ -14,7 +14,7 @@ resources:
 images:
   - name: tuanstark/expense-tracker-function
     newName: tuanstark/expense-tracker-function
-    newTag: "sha-b283cac" # backend-image-tag
+    newTag: "sha-9e00b8d"
   - name: tuanstark/expense-tracker-customer
     newName: tuanstark/expense-tracker-customer
     newTag: "sha-99af31c" # frontend-image-tag
